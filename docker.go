@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -364,4 +365,177 @@ func (client *Client) Exec(config *ExecConfig) (string, error) {
 		return "", err
 	}
 	return createExecResp.Id, nil
+}
+
+func (client *Client) InspectImage(name string) (ImageInfo, error) {
+	uri := fmt.Sprintf("/images/%s/json", name)
+	resp, err := client.doRequest("GET", uri, nil)
+	if err != nil {
+		return ImageInfo{}, err
+	}
+	img := ImageInfo{}
+	if err := json.Unmarshal(resp, &img); err != nil {
+		return ImageInfo{}, fmt.Errorf("docker: InspectImage: %v", err)
+	}
+	return img, nil
+}
+
+type CommitOptions struct {
+	Container string
+	Repo      string
+	Tag       string
+	Comment   string
+	Author    string
+}
+
+func (options CommitOptions) toURLQuery() string {
+	values := url.Values{}
+	opts := []struct {
+		Name string
+		Val  string
+	}{
+		{"container", options.Container},
+		{"repo", options.Repo},
+		{"tag", options.Tag},
+		{"comment", options.Comment},
+		{"author", options.Author},
+	}
+	for _, option := range opts {
+		if option.Val != "" {
+			values.Add(option.Name, option.Val)
+		}
+	}
+	return values.Encode()
+}
+
+func (client *Client) Commit(options CommitOptions, config ContainerConfig) (string, error) {
+	data, err := json.Marshal(&config)
+	if err != nil {
+		return "", err
+	}
+	uri := fmt.Sprintf("/commit?" + options.toURLQuery())
+	resp, err := client.doRequest("POST", uri, data)
+	if err != nil {
+		return "", err
+	}
+	var commitResp struct {
+		Id string
+	}
+	if err = json.Unmarshal(resp, &commitResp); err != nil {
+		return "", fmt.Errorf("docker: commit: %v", err)
+	}
+	if commitResp.Id == "" {
+		return "", fmt.Errorf("docker: commit: response did not have Id field")
+	}
+	return commitResp.Id, nil
+}
+
+// Wait blocks until a container has exited. Wait returns the StatusCode of the
+// exited process.
+func (client *Client) Wait(cid string) (int, error) {
+	uri := fmt.Sprintf("/containers/%s/wait", cid)
+	resp, err := client.doRequest("POST", uri, nil)
+	if err != nil {
+		return 0, err
+	}
+	waitResp := struct {
+		StatusCode int
+	}{-1}
+	if err := json.Unmarshal(resp, &waitResp); err != nil {
+		return 0, fmt.Errorf("docker: wait: %v", err)
+	}
+	return waitResp.StatusCode, nil
+}
+
+type AttachOptions struct {
+	Logs   bool
+	Stream bool
+	Stdin  bool
+	Stdout bool
+	Stderr bool
+}
+
+func (options AttachOptions) toURLQuery() string {
+	values := url.Values{}
+	add := func(name string, val bool) {
+		values.Add(name, strconv.FormatBool(val))
+	}
+	add("logs", options.Logs)
+	add("stream", options.Stream)
+	add("stdin", options.Stdin)
+	add("stdout", options.Stdout)
+	add("stderr", options.Stderr)
+	return values.Encode()
+}
+
+// Attach returns the stdout and stderr stream of a stopped or running
+// container. It is the callers responsibility to close the returned stream.
+// Use SplitStream to parse stdout and stderr.
+func (client *Client) Attach(cid string, options AttachOptions) (io.ReadCloser, error) {
+	p := fmt.Sprintf("/containers/%s/attach?%s", cid, options.toURLQuery())
+	req, err := http.NewRequest("POST", client.URL.String()+p, nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not construct request to docker")
+	}
+	resp, err := client.HTTPClient.Do(req)
+	if err != nil {
+		if !strings.Contains(err.Error(), "connection refused") && client.TLSConfig == nil {
+			return nil, fmt.Errorf("%v. Are you trying to connect to a TLS-enabled daemon without TLS?", err)
+		}
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusOK {
+		return resp.Body, nil
+	}
+
+	resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusSwitchingProtocols:
+		return nil, fmt.Errorf("docker: attach: did not send websocket request but got 101 back")
+	case http.StatusBadRequest:
+		// Probably shouldn't get here
+		return nil, fmt.Errorf("docker: attach: invalid request parameters")
+	case http.StatusNotFound:
+		return nil, ErrNotFound
+	case http.StatusInternalServerError:
+		return nil, fmt.Errorf("docker: attach: internal server error")
+	default:
+		return nil, fmt.Errorf("docker: attach: unexpected status code %s", resp.Status)
+	}
+}
+
+const (
+	StdinStream  byte = 0
+	StdoutStream      = 1
+	StderrStream      = 2
+)
+
+// SplitStream splits docker stream data into stdout and stderr.
+// For specifications see http://goo.gl/Dnbcye
+func SplitStream(stream io.Reader, stdout, stderr io.Writer) error {
+	header := make([]byte, 8)
+	for {
+		if _, err := io.ReadFull(stream, header); err != nil {
+			if err == io.EOF {
+				return nil
+			} else {
+				return fmt.Errorf("could not read header: %v", err)
+			}
+		}
+
+		var dest io.Writer
+		switch header[0] {
+		case StdinStream, StdoutStream:
+			dest = stdout
+		case StderrStream:
+			dest = stderr
+		default:
+			return fmt.Errorf("bad STREAM_TYPE given: %x", header[0])
+		}
+
+		frameSize := int64(binary.BigEndian.Uint32(header[4:]))
+		if _, err := io.CopyN(dest, stream, frameSize); err != nil {
+			return fmt.Errorf("copying stream payload failed: %v", err)
+		}
+	}
 }

@@ -152,6 +152,15 @@ type Image struct {
 	VirtualSize int64
 }
 
+// returned by InspectImage
+type ImageInfo struct {
+	Created   string
+	Container string
+	Id        string
+	Parent    string
+	Size      int
+}
+
 type Info struct {
 	ID              string
 	Containers      int64
