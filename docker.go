@@ -408,7 +408,7 @@ func (options CommitOptions) toURLQuery() string {
 	return values.Encode()
 }
 
-func (client *Client) Commit(options CommitOptions, config ContainerConfig) (string, error) {
+func (client *Client) Commit(options *CommitOptions, config *ContainerConfig) (string, error) {
 	data, err := json.Marshal(&config)
 	if err != nil {
 		return "", err
@@ -471,7 +471,7 @@ func (options AttachOptions) toURLQuery() string {
 // Attach returns the stdout and stderr stream of a stopped or running
 // container. It is the callers responsibility to close the returned stream.
 // Use SplitStream to parse stdout and stderr.
-func (client *Client) Attach(cid string, options AttachOptions) (io.ReadCloser, error) {
+func (client *Client) Attach(cid string, options *AttachOptions) (io.ReadCloser, error) {
 	p := fmt.Sprintf("/containers/%s/attach?%s", cid, options.toURLQuery())
 	req, err := http.NewRequest("POST", client.URL.String()+p, nil)
 	if err != nil {
