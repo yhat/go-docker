@@ -380,40 +380,25 @@ func (client *Client) InspectImage(name string) (ImageInfo, error) {
 	return img, nil
 }
 
-type CommitOptions struct {
-	Container string
-	Repo      string
-	Tag       string
-	Comment   string
-	Author    string
-}
+func (client *Client) Commit(options *CommitOptions, config *ContainerConfig) (string, error) {
 
-func (options CommitOptions) toURLQuery() string {
 	values := url.Values{}
-	opts := []struct {
-		Name string
-		Val  string
-	}{
-		{"container", options.Container},
-		{"repo", options.Repo},
-		{"tag", options.Tag},
-		{"comment", options.Comment},
-		{"author", options.Author},
-	}
-	for _, option := range opts {
-		if option.Val != "" {
-			values.Add(option.Name, option.Val)
+	add := func(name, val string) {
+		if val != "" {
+			values.Add(name, val)
 		}
 	}
-	return values.Encode()
-}
+	add("container", options.Container)
+	add("repo", options.Repo)
+	add("tag", options.Tag)
+	add("comment", options.Comment)
+	add("author", options.Author)
 
-func (client *Client) Commit(options *CommitOptions, config *ContainerConfig) (string, error) {
 	data, err := json.Marshal(&config)
 	if err != nil {
 		return "", err
 	}
-	uri := fmt.Sprintf("/commit?" + options.toURLQuery())
+	uri := fmt.Sprintf("/commit?" + values.Encode())
 	resp, err := client.doRequest("POST", uri, data)
 	if err != nil {
 		return "", err
@@ -447,15 +432,10 @@ func (client *Client) Wait(cid string) (int, error) {
 	return waitResp.StatusCode, nil
 }
 
-type AttachOptions struct {
-	Logs   bool
-	Stream bool
-	Stdin  bool
-	Stdout bool
-	Stderr bool
-}
-
-func (options AttachOptions) toURLQuery() string {
+// Attach returns the stdout and stderr stream of a stopped or running
+// container. It is the callers responsibility to close the returned stream.
+// Use SplitStream to parse stdout and stderr.
+func (client *Client) Attach(cid string, options *AttachOptions) (io.ReadCloser, error) {
 	values := url.Values{}
 	add := func(name string, val bool) {
 		values.Add(name, strconv.FormatBool(val))
@@ -465,14 +445,8 @@ func (options AttachOptions) toURLQuery() string {
 	add("stdin", options.Stdin)
 	add("stdout", options.Stdout)
 	add("stderr", options.Stderr)
-	return values.Encode()
-}
 
-// Attach returns the stdout and stderr stream of a stopped or running
-// container. It is the callers responsibility to close the returned stream.
-// Use SplitStream to parse stdout and stderr.
-func (client *Client) Attach(cid string, options *AttachOptions) (io.ReadCloser, error) {
-	p := fmt.Sprintf("/containers/%s/attach?%s", cid, options.toURLQuery())
+	p := fmt.Sprintf("/containers/%s/attach?%s", cid, values.Encode())
 	req, err := http.NewRequest("POST", client.URL.String()+p, nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not construct request to docker")

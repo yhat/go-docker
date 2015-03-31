@@ -180,3 +180,18 @@ type ImageDelete struct {
 	Deleted  string
 	Untagged string
 }
+
+type AttachOptions struct {
+	Logs   bool
+	Stream bool
+	Stdin  bool
+	Stdout bool
+	Stderr bool
+}
+type CommitOptions struct {
+	Container string
+	Repo      string
+	Tag       string
+	Comment   string
+	Author    string
+}
