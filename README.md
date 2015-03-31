@@ -2,8 +2,10 @@
 
 [![GoDoc](http://godoc.org/github.com/yhat/go-docker?status.png)](http://godoc.org/github.com/yhat/go-docker)
 
-This is a fork of the samalba/dockerclient library. It adds a few missing API
-calls and removes event callbacks.
+This is a fork of the samalba/dockerclient library. It adds missing API calls
+such as wait, commit, and attach as well as a splitter for Docker stream events
+(like containers stdout and stderr). The fork also removes event callbacks and
+tests against a Docker installation rather than mocks.
 
 Example:
 
@@ -26,13 +28,9 @@ func SayHi() error {
 	}
 
 	// create a container
-	hostConfig := docker.HostConfig{}
 	config := &docker.ContainerConfig{
-		Image:        "ubuntu:14.04",
-		Cmd:          []string{"echo", "hello from docker land"},
-		AttachStdout: true,
-		AttachStderr: true,
-		HostConfig:   hostConfig,
+		Image: "ubuntu:14.04",
+		Cmd:   []string{"echo", "hello from docker land"},
 	}
 	cid, err := cli.CreateContainer(config, "myimage")
 	if err != nil {
@@ -47,12 +45,8 @@ func SayHi() error {
 	}()
 
 	// attach to the container
-	streamOptions := docker.AttachOptions{
-		Stream: true,
-		Stdout: true,
-		Stderr: true,
-	}
-	stream, err := cli.Attach(cid, streamOptions)
+	streamOpts := &docker.AttachOptions{Stream: true, Stdout: true, Stderr: true}
+	stream, err := cli.Attach(cid, streamOpts)
 	if err != nil {
 		return err
 		log.Fatalf("could not attach to container: %v", err)
@@ -67,7 +61,7 @@ func SayHi() error {
 	}()
 
 	// start the container
-	if err := cli.StartContainer(cid, &hostConfig); err != nil {
+	if err := cli.StartContainer(cid, &docker.HostConfig{}); err != nil {
 		return err
 	}
 
