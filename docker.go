@@ -415,6 +415,20 @@ func (client *Client) Commit(options *CommitOptions, config *ContainerConfig) (s
 	return commitResp.Id, nil
 }
 
+// Changes provides a list of changes made to a container.
+func (client *Client) Changes(cid string) ([]ContainerChange, error) {
+	uri := fmt.Sprintf("/containers/%s/changes", cid)
+	resp, err := client.doRequest("GET", uri, nil)
+	var changes []ContainerChange
+	if err != nil {
+		return changes, err
+	}
+	if err = json.Unmarshal(resp, &changes); err != nil {
+		return changes, fmt.Errorf("docker: changes: %v", err)
+	}
+	return changes, nil
+}
+
 // Wait blocks until a container has exited. Wait returns the StatusCode of the
 // exited process.
 func (client *Client) Wait(cid string) (int, error) {

@@ -2,6 +2,14 @@ package docker
 
 import "time"
 
+type ChangeType int
+
+const (
+	ChangeModify = iota
+	ChangeAdd
+	ChangeDelete
+)
+
 type ContainerConfig struct {
 	Hostname        string
 	Domainname      string
@@ -194,4 +202,8 @@ type CommitOptions struct {
 	Tag       string
 	Comment   string
 	Author    string
+}
+type ContainerChange struct {
+	Kind int
+	Path string
 }

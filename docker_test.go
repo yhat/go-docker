@@ -221,7 +221,7 @@ func TestCommit(t *testing.T) {
 	}
 	id, err := cli.Commit(ops, config)
 	if err != nil {
-		t.Errorf("could ont commit container: %v", err)
+		t.Errorf("could not commit container: %v", err)
 		return
 	}
 
@@ -248,5 +248,77 @@ func TestCommit(t *testing.T) {
 
 	if err := startWait(cid); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestChanges(t *testing.T) {
+	cli := newClient(t)
+	name1 := randName(t)
+
+	config := &ContainerConfig{
+		Image: "ubuntu:trusty",
+		Cmd: []string{
+			"/bin/bash", "-c",
+			"touch /tmp/foo && rm /etc/debian_version && touch /etc/passwd",
+		},
+	}
+
+	cid, err := cli.CreateContainer(config, name1)
+	if err != nil {
+		t.Errorf("could not create container: %v", err)
+		return
+	}
+	defer func(cid string) {
+		if err := cli.RemoveContainer(cid, true, false); err != nil {
+			t.Errorf("could not remove container: %v", err)
+		}
+	}(cid)
+	startWait := func(cid string) error {
+		if err := cli.StartContainer(cid, &HostConfig{}); err != nil {
+			return fmt.Errorf("could not start container: %v", err)
+		}
+		rc, err := cli.Wait(cid)
+		if err != nil {
+			return fmt.Errorf("error waiting for container: %v", err)
+		}
+		if rc != 0 {
+			return fmt.Errorf("non zero return code: %d", rc)
+		}
+		return nil
+	}
+	if err := startWait(cid); err != nil {
+		t.Error(err)
+		return
+	}
+	changes, err := cli.Changes(cid)
+	if err != nil {
+		t.Errorf("could not get changes for container: %v", err)
+		return
+	}
+
+	// Make sure we we all the appropriate changes.
+	if len(changes) != 5 {
+		t.Errorf("5 changes expected, %d returned: %v", len(changes), changes)
+	}
+
+	// Deleted /etc/debian_version
+	if changes[0].Kind != ChangeModify || changes[0].Path != "/etc" {
+		t.Errorf("/etc not modified")
+	}
+	if changes[1].Kind != ChangeDelete || changes[1].Path != "/etc/debian_version" {
+		t.Errorf("/etc/debian_version not deleted")
+	}
+
+	// Modified /etc/passwd
+	if changes[2].Kind != ChangeModify || changes[2].Path != "/etc/passwd" {
+		t.Errorf("/etc/passwd not modified")
+	}
+
+	// Created /tmp/foo
+	if changes[3].Kind != ChangeModify || changes[3].Path != "/tmp" {
+		t.Errorf("/tmp not modified")
+	}
+	if changes[4].Kind != ChangeAdd || changes[4].Path != "/tmp/foo" {
+		t.Errorf("/tmp/foo not created")
 	}
 }
