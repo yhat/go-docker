@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -320,5 +321,80 @@ func TestChanges(t *testing.T) {
 	}
 	if changes[4].Kind != ChangeAdd || changes[4].Path != "/tmp/foo" {
 		t.Errorf("/tmp/foo not created")
+	}
+}
+
+func TestCopy(t *testing.T) {
+	cli := newClient(t)
+	name1 := randName(t)
+
+	contents := "foobarbaz"
+	filename := "/tmp/xyzzy"
+	config := &ContainerConfig{
+		Image: "ubuntu:trusty",
+		Cmd: []string{
+			"/bin/bash", "-c",
+			fmt.Sprintf("echo %s > %s", contents, filename),
+		},
+	}
+
+	cid, err := cli.CreateContainer(config, name1)
+	if err != nil {
+		t.Errorf("could not create container: %v", err)
+		return
+	}
+	defer func(cid string) {
+		if err := cli.RemoveContainer(cid, true, false); err != nil {
+			t.Errorf("could not remove container: %v", err)
+		}
+	}(cid)
+	startWait := func(cid string) error {
+		if err := cli.StartContainer(cid, &HostConfig{}); err != nil {
+			return fmt.Errorf("could not start container: %v", err)
+		}
+		rc, err := cli.Wait(cid)
+		if err != nil {
+			return fmt.Errorf("error waiting for container: %v", err)
+		}
+		if rc != 0 {
+			return fmt.Errorf("non zero return code: %d", rc)
+		}
+		return nil
+	}
+	if err := startWait(cid); err != nil {
+		t.Error(err)
+		return
+	}
+	tarReader, err := cli.Copy(cid, filename)
+	if err != nil {
+		t.Errorf("could not get changes for container: %v", err)
+		return
+	}
+
+	// Make sure we have the right contents.
+	hdr, err := tarReader.Next()
+	if err == io.EOF {
+		t.Errorf("%s not found in tar archive", filename)
+	}
+	if err != nil {
+		t.Error(err)
+	}
+
+	if hdr.Name != "xyzzy" {
+		t.Errorf("expected file name xyzzy, got %s", hdr.Name)
+	}
+
+	b := make([]byte, len(contents))
+	n, err := tarReader.Read(b)
+	if err != nil {
+		t.Error(err)
+	}
+	if n != len(contents) {
+		t.Errorf("content length = %d, expected %d", n, len(contents))
+	}
+
+	bStr := string(b)
+	if bStr != contents {
+		t.Errorf("expected contents %v, got %v", contents, bStr)
 	}
 }

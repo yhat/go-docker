@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"archive/tar"
 	"bytes"
 	"crypto/tls"
 	"encoding/binary"
@@ -427,6 +428,23 @@ func (client *Client) Changes(cid string) ([]ContainerChange, error) {
 		return changes, fmt.Errorf("docker: changes: %v", err)
 	}
 	return changes, nil
+}
+
+// Copy copies files or folders from a container.
+func (client *Client) Copy(cid, resource string) (*tar.Reader, error) {
+	data, err := json.Marshal(map[string]string{"Resource": resource})
+	if err != nil {
+		return nil, err
+	}
+
+	uri := fmt.Sprintf("/containers/%s/copy", cid)
+
+	resp, err := client.doRequest("POST", uri, data)
+	if err != nil {
+		return nil, err
+	}
+
+	return tar.NewReader(bytes.NewReader(resp)), nil
 }
 
 // Wait blocks until a container has exited. Wait returns the StatusCode of the
