@@ -14,7 +14,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"time"
 
@@ -22,7 +21,9 @@ import (
 )
 
 func SayHi() error {
-	cli, err := docker.NewClient("unix:///var/run/docker.sock", nil, 3*time.Second)
+	timeout := 3 * time.Second
+
+	cli, err := docker.NewDefaultClient(timeout)
 	if err != nil {
 		return err
 	}
@@ -38,30 +39,22 @@ func SayHi() error {
 	}
 
 	// always remember to clean up after yourself
-	defer func() {
-		if err := cli.RemoveContainer(cid, true, false); err != nil {
-			fmt.Printf("could not remove container: %v\n", err)
-		}
-	}()
+	defer cli.RemoveContainer(cid, true, false)
 
 	// attach to the container
 	streamOpts := &docker.AttachOptions{Stream: true, Stdout: true, Stderr: true}
 	stream, err := cli.Attach(cid, streamOpts)
 	if err != nil {
 		return err
-		log.Fatalf("could not attach to container: %v", err)
 	}
 	defer stream.Close()
 
 	// concurrently write stream to stdout and stderr
-	go func() {
-		if err := docker.SplitStream(stream, os.Stdout, os.Stderr); err != nil {
-			fmt.Printf("error spliting stream: %v\n", err)
-		}
-	}()
+	go docker.SplitStream(stream, os.Stdout, os.Stderr)
 
 	// start the container
-	if err := cli.StartContainer(cid, &docker.HostConfig{}); err != nil {
+	err = cli.StartContainer(cid, &docker.HostConfig{})
+	if err != nil {
 		return err
 	}
 
