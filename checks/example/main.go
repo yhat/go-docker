@@ -14,6 +14,6 @@ func main() {
 	c.Register(checks.CheckSimpleCommand, "CheckSimpleCommand")
 	c.Register(checks.CheckInternetAccess, "CheckInternetAccess")
 	c.Register(checks.CheckExposedPort, "CheckExposingPort")
-	c.Register(checks.CheckFileMouting, "CheckFileMounting")
+	c.Register(checks.CheckFileMounting, "CheckFileMounting")
 	os.Exit(c.Run())
 }

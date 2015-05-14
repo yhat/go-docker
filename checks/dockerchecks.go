@@ -364,7 +364,7 @@ func CheckInternetAccess() (err error) {
 
 // CheckFileMounting confirms that docker can mount a file on the host machine
 // into a container.
-func CheckFileMouting() (err error) {
+func CheckFileMounting() (err error) {
 	cli, err := newClient()
 	if err != nil {
 		return fmt.Errorf("creating client: %v", err)
