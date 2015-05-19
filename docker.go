@@ -416,6 +416,24 @@ func (client *Client) Commit(options *CommitOptions, config *ContainerConfig) (s
 	return commitResp.Id, nil
 }
 
+func (client *Client) Tag(imgId string, ops *TagOptions) error {
+	values := url.Values{}
+	if ops.Repo != "" {
+		values.Add("repo", ops.Repo)
+	}
+	if ops.Tag != "" {
+		values.Add("tag", ops.Tag)
+	}
+	values.Add("force", strconv.FormatBool(ops.Force))
+	// urlencode image id
+	imgId = (&url.URL{Path: imgId}).String()
+
+	uri := fmt.Sprintf("/images/%s/tag?%s", imgId, values.Encode())
+	_, err := client.doRequest("POST", uri, nil)
+	// doRequest checks for a 200
+	return err
+}
+
 // Changes provides a list of changes made to a container.
 func (client *Client) Changes(cid string) ([]ContainerChange, error) {
 	uri := fmt.Sprintf("/containers/%s/changes", cid)

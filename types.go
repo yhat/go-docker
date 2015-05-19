@@ -196,6 +196,7 @@ type AttachOptions struct {
 	Stdout bool
 	Stderr bool
 }
+
 type CommitOptions struct {
 	Container string
 	Repo      string
@@ -203,7 +204,14 @@ type CommitOptions struct {
 	Comment   string
 	Author    string
 }
+
 type ContainerChange struct {
 	Kind int
 	Path string
+}
+
+type TagOptions struct {
+	Repo  string
+	Force bool
+	Tag   string
 }
