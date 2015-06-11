@@ -38,6 +38,22 @@ func TestInfo(t *testing.T) {
 	}
 }
 
+func TestListImages(t *testing.T) {
+	cli := newClient(t)
+	imgs, err := cli.ListImages(false)
+	if err != nil {
+		t.Fatalf("could not list docker images: %v", err)
+	}
+	allImgs, err := cli.ListImages(true)
+	if err != nil {
+		t.Fatalf("could not list all docker images: %v", err)
+	}
+	// we expect using all=true to return more images than when it's not turned on
+	if len(imgs) >= len(allImgs) {
+		t.Error("allimages=true returned less than false, %d vs %d", len(allImgs), len(imgs))
+	}
+}
+
 func TestListContainers(t *testing.T) {
 	cli := newClient(t)
 	config := ContainerConfig{

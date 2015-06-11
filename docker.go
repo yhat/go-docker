@@ -301,8 +301,15 @@ func (client *Client) RemoveContainer(id string, force, volumes bool) error {
 	return err
 }
 
-func (client *Client) ListImages() ([]*Image, error) {
+func (client *Client) ListImages(all bool) ([]*Image, error) {
+	vals := url.Values{}
+	if all {
+		vals.Set("all", "1")
+	}
 	uri := fmt.Sprintf("/%s/images/json", APIVersion)
+	if len(vals) > 0 {
+		uri = uri + "?" + vals.Encode()
+	}
 	data, err := client.doRequest("GET", uri, nil)
 	if err != nil {
 		return nil, err
