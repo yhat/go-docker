@@ -188,6 +188,7 @@ type ImageInfo struct {
 type Info struct {
 	ID              string
 	Containers      int64
+	DockerRootDir   string
 	Driver          string
 	DriverStatus    [][]string
 	ExecutionDriver string
