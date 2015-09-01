@@ -388,6 +388,20 @@ func (client *Client) InspectImage(name string) (ImageInfo, error) {
 	return img, nil
 }
 
+func (client *Client) History(id string) ([]ImageLayer, error) {
+	uri := fmt.Sprintf("%s/images/%s/history", APIVersion, id)
+	data, err := client.doRequest("GET", uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	layers := []ImageLayer{}
+	err = json.Unmarshal(data, &layers)
+	if err != nil {
+		return nil, err
+	}
+	return layers, nil
+}
+
 func (client *Client) Commit(options *CommitOptions, config *ContainerConfig) (string, error) {
 
 	values := url.Values{}

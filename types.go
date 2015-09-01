@@ -166,6 +166,16 @@ type Image struct {
 	VirtualSize int64
 }
 
+//returned by History
+type ImageLayer struct {
+	Id        string
+	Created   int64
+	CreatedBy string
+	Comment   string
+	Size      int64
+	Tags      []string
+}
+
 // returned by InspectImage
 type ImageInfo struct {
 	Created   string
