@@ -286,6 +286,28 @@ func (client *Client) PullImage(name string, auth *AuthConfig) error {
 	return nil
 }
 
+func (client *Client) LoadImage(reader io.Reader) error {
+	uri := fmt.Sprintf("/%s/images/load", APIVersion)
+	req, err := http.NewRequest("POST", client.URL.String()+uri, reader)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Content-Type", "application/json")
+	resp, err := client.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		return Error{StatusCode: resp.StatusCode, Status: resp.Status, msg: string(data)}
+	}
+	return nil
+}
+
 func (client *Client) RemoveContainer(id string, force, volumes bool) error {
 	argForce := 0
 	argVolumes := 0
