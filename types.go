@@ -52,6 +52,12 @@ type HostConfig struct {
 	VolumesFrom     []string
 	NetworkMode     string
 	RestartPolicy   RestartPolicy
+	Memory          int64
+	MemorySwap      int64
+	CpuShares       int64
+	CpuPeriod       int64
+	CpusetCpus      string
+	CpusetMems      string
 }
 
 type ExecConfig struct {
