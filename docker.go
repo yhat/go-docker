@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -20,8 +19,6 @@ import (
 
 const APIVersion = "v1.17"
 
-var ErrNotFound = errors.New("Not found")
-
 type Client struct {
 	URL        *url.URL
 	HTTPClient *http.Client
@@ -34,7 +31,7 @@ type Error struct {
 	msg        string
 }
 
-func (e Error) Error() string {
+func (e *Error) Error() string {
 	return fmt.Sprintf("%s: %s", e.Status, e.msg)
 }
 
@@ -97,11 +94,8 @@ func (client *Client) doRequest(method string, path string, body []byte) ([]byte
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode == 404 {
-		return nil, ErrNotFound
-	}
 	if resp.StatusCode >= 400 {
-		return nil, Error{StatusCode: resp.StatusCode, Status: resp.Status, msg: string(data)}
+		return nil, &Error{StatusCode: resp.StatusCode, Status: resp.Status, msg: string(data)}
 	}
 	return data, nil
 }
@@ -526,8 +520,6 @@ func (client *Client) Attach(cid string, options *AttachOptions) (io.ReadCloser,
 	case http.StatusBadRequest:
 		// Probably shouldn't get here
 		return nil, fmt.Errorf("docker: attach: invalid request parameters")
-	case http.StatusNotFound:
-		return nil, ErrNotFound
 	case http.StatusInternalServerError:
 		return nil, fmt.Errorf("docker: attach: internal server error")
 	default:
