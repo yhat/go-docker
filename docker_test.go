@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -50,7 +52,7 @@ func TestListImages(t *testing.T) {
 	}
 	// we expect using all=true to return more images than when it's not turned on
 	if len(imgs) >= len(allImgs) {
-		t.Error("allimages=true returned less than false, %d vs %d", len(allImgs), len(imgs))
+		t.Errorf("allimages=true returned less than false, %d vs %d", len(allImgs), len(imgs))
 	}
 }
 
@@ -91,12 +93,15 @@ func TestListContainers(t *testing.T) {
 func TestInspectContainer(t *testing.T) {
 	cli := newClient(t)
 	_, err := cli.InspectContainer("idonotexist")
-	switch err {
-	case nil:
-		t.Fatalf("was able to inspect a non existent container")
-	case ErrNotFound:
-	default:
+	if err == nil {
 		t.Fatalf("expected ErrNotFound, got: %v", err)
+	}
+	dockerErr, ok := err.(*Error)
+	if !ok {
+		t.Fatalf("expected error to be of type *docker.Error, got %s", reflect.TypeOf(err))
+	}
+	if dockerErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("was able to inspect a non existent container")
 	}
 }
 
