@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -75,12 +77,12 @@ func newHTTPClient(u *url.URL, tlsConfig *tls.Config, timeout time.Duration) *ht
 	return &http.Client{Transport: httpTransport}
 }
 
-func (client *Client) doRequest(method string, path string, body []byte) ([]byte, error) {
-	b := bytes.NewBuffer(body)
-	req, err := http.NewRequest(method, client.URL.String()+path, b)
+func (client *Client) DoRequest(method string, path string, body io.Reader) (*http.Response, error) {
+	req, err := client.NewRequest(method, path, body)
 	if err != nil {
 		return nil, err
 	}
+
 	req.Header.Add("Content-Type", "application/json")
 	resp, err := client.HTTPClient.Do(req)
 	if err != nil {
@@ -89,29 +91,94 @@ func (client *Client) doRequest(method string, path string, body []byte) ([]byte
 		}
 		return nil, err
 	}
-	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
 	if resp.StatusCode >= 400 {
+		data, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read body from response: %v", err)
+		}
 		return nil, &Error{StatusCode: resp.StatusCode, Status: resp.Status, msg: string(data)}
 	}
-	return data, nil
+	return resp, nil
+}
+
+func (client *Client) NewRequest(method string, path string, body io.Reader) (*http.Request, error) {
+	return http.NewRequest(method, client.URL.String()+path, body)
+}
+
+// jsonUnmarshal reads the full body from the response and attempts to unmarshal
+// the result into the value v.
+// For convenience it also closes the response body.
+func jsonUnmarshal(resp *http.Response, v interface{}) error {
+	data, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read body from response: %v", err)
+	}
+	return json.Unmarshal(data, v)
 }
 
 func (client *Client) Info() (*Info, error) {
 	uri := fmt.Sprintf("/%s/info", APIVersion)
-	data, err := client.doRequest("GET", uri, nil)
+	data, err := client.DoRequest("GET", uri, nil)
 	if err != nil {
 		return nil, err
 	}
 	ret := &Info{}
-	err = json.Unmarshal(data, &ret)
+	err = jsonUnmarshal(data, &ret)
 	if err != nil {
 		return nil, err
 	}
 	return ret, nil
+}
+
+func (client *Client) Push(name, tag string, auth *AuthConfig) error {
+	data, err := json.Marshal(auth)
+	if err != nil {
+		return err
+	}
+	authHeader := base64.URLEncoding.EncodeToString(data)
+	path := "/images/" + name + "/push"
+	if tag != "" {
+		path = path + "?" + (url.Values{"tag": []string{tag}}).Encode()
+	}
+
+	req, err := client.NewRequest("POST", "/images/"+name+"/push", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("X-Registry-Auth", authHeader)
+	resp, err := client.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read body from response: %v", err)
+		}
+		return &Error{StatusCode: resp.StatusCode, Status: resp.Status, msg: string(data)}
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	for {
+		var s struct {
+			Error string `json:"error"`
+		}
+		if err := decoder.Decode(&s); err != nil {
+			if err == io.EOF {
+				// Don't know if this is the correct logic, but the documentation
+				// on the remote api doesn't actually describe how to ensure a
+				// push is successful as of v1.20
+				return nil
+			}
+			return err
+		}
+		if s.Error != "" {
+			return errors.New(s.Error)
+		}
+	}
 }
 
 func (client *Client) ListContainers(all bool, size bool, filters string) ([]Container, error) {
@@ -129,12 +196,12 @@ func (client *Client) ListContainers(all bool, size bool, filters string) ([]Con
 		uri += "&filters=" + filters
 	}
 
-	data, err := client.doRequest("GET", uri, nil)
+	data, err := client.DoRequest("GET", uri, nil)
 	if err != nil {
 		return nil, err
 	}
 	ret := []Container{}
-	err = json.Unmarshal(data, &ret)
+	err = jsonUnmarshal(data, &ret)
 	if err != nil {
 		return nil, err
 	}
@@ -143,12 +210,12 @@ func (client *Client) ListContainers(all bool, size bool, filters string) ([]Con
 
 func (client *Client) InspectContainer(id string) (*ContainerInfo, error) {
 	uri := fmt.Sprintf("/%s/containers/%s/json", APIVersion, id)
-	data, err := client.doRequest("GET", uri, nil)
+	data, err := client.DoRequest("GET", uri, nil)
 	if err != nil {
 		return nil, err
 	}
 	info := &ContainerInfo{}
-	err = json.Unmarshal(data, info)
+	err = jsonUnmarshal(data, info)
 	if err != nil {
 		return nil, err
 	}
@@ -166,12 +233,12 @@ func (client *Client) CreateContainer(config *ContainerConfig, name string) (str
 		v.Set("name", name)
 		uri = fmt.Sprintf("%s?%s", uri, v.Encode())
 	}
-	data, err = client.doRequest("POST", uri, data)
+	resp, err := client.DoRequest("POST", uri, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
 	result := &RespContainersCreate{}
-	err = json.Unmarshal(data, result)
+	err = jsonUnmarshal(resp, result)
 	if err != nil {
 		return "", err
 	}
@@ -207,48 +274,52 @@ func (client *Client) StartContainer(id string, config *HostConfig) error {
 		return err
 	}
 	uri := fmt.Sprintf("/%s/containers/%s/start", APIVersion, id)
-	_, err = client.doRequest("POST", uri, data)
+	resp, err := client.DoRequest("POST", uri, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
+	resp.Body.Close()
 	return nil
 }
 
 func (client *Client) StopContainer(id string, timeout int) error {
 	uri := fmt.Sprintf("/%s/containers/%s/stop?t=%d", APIVersion, id, timeout)
-	_, err := client.doRequest("POST", uri, nil)
+	resp, err := client.DoRequest("POST", uri, nil)
 	if err != nil {
 		return err
 	}
+	resp.Body.Close()
 	return nil
 }
 
 func (client *Client) RestartContainer(id string, timeout int) error {
 	uri := fmt.Sprintf("/%s/containers/%s/restart?t=%d", APIVersion, id, timeout)
-	_, err := client.doRequest("POST", uri, nil)
+	resp, err := client.DoRequest("POST", uri, nil)
 	if err != nil {
 		return err
 	}
+	resp.Body.Close()
 	return nil
 }
 
 func (client *Client) KillContainer(id, signal string) error {
 	uri := fmt.Sprintf("/%s/containers/%s/kill?signal=%s", APIVersion, id, signal)
-	_, err := client.doRequest("POST", uri, nil)
+	resp, err := client.DoRequest("POST", uri, nil)
 	if err != nil {
 		return err
 	}
+	resp.Body.Close()
 	return nil
 }
 
 func (client *Client) Version() (*Version, error) {
 	uri := fmt.Sprintf("/%s/version", APIVersion)
-	data, err := client.doRequest("GET", uri, nil)
+	data, err := client.DoRequest("GET", uri, nil)
 	if err != nil {
 		return nil, err
 	}
 	version := &Version{}
-	err = json.Unmarshal(data, version)
+	err = jsonUnmarshal(data, version)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +384,10 @@ func (client *Client) RemoveContainer(id string, force, volumes bool) error {
 	}
 	args := fmt.Sprintf("force=%d&v=%d", argForce, argVolumes)
 	uri := fmt.Sprintf("/%s/containers/%s?%s", APIVersion, id, args)
-	_, err := client.doRequest("DELETE", uri, nil)
+	resp, err := client.DoRequest("DELETE", uri, nil)
+	if err == nil {
+		resp.Body.Close()
+	}
 	return err
 }
 
@@ -326,12 +400,12 @@ func (client *Client) ListImages(all bool) ([]*Image, error) {
 	if len(vals) > 0 {
 		uri = uri + "?" + vals.Encode()
 	}
-	data, err := client.doRequest("GET", uri, nil)
+	data, err := client.DoRequest("GET", uri, nil)
 	if err != nil {
 		return nil, err
 	}
 	var images []*Image
-	if err := json.Unmarshal(data, &images); err != nil {
+	if err := jsonUnmarshal(data, &images); err != nil {
 		return nil, err
 	}
 	return images, nil
@@ -339,12 +413,12 @@ func (client *Client) ListImages(all bool) ([]*Image, error) {
 
 func (client *Client) RemoveImage(name string) ([]*ImageDelete, error) {
 	uri := fmt.Sprintf("/%s/images/%s", APIVersion, name)
-	data, err := client.doRequest("DELETE", uri, nil)
+	data, err := client.DoRequest("DELETE", uri, nil)
 	if err != nil {
 		return nil, err
 	}
 	var imageDelete []*ImageDelete
-	if err := json.Unmarshal(data, &imageDelete); err != nil {
+	if err := jsonUnmarshal(data, &imageDelete); err != nil {
 		return nil, err
 	}
 	return imageDelete, nil
@@ -352,19 +426,19 @@ func (client *Client) RemoveImage(name string) ([]*ImageDelete, error) {
 
 func (client *Client) PauseContainer(id string) error {
 	uri := fmt.Sprintf("/%s/containers/%s/pause", APIVersion, id)
-	_, err := client.doRequest("POST", uri, nil)
-	if err != nil {
-		return err
+	resp, err := client.DoRequest("POST", uri, nil)
+	if err == nil {
+		resp.Body.Close()
 	}
-	return nil
+	return err
 }
 func (client *Client) UnpauseContainer(id string) error {
 	uri := fmt.Sprintf("/%s/containers/%s/unpause", APIVersion, id)
-	_, err := client.doRequest("POST", uri, nil)
-	if err != nil {
-		return err
+	resp, err := client.DoRequest("POST", uri, nil)
+	if err == nil {
+		resp.Body.Close()
 	}
-	return nil
+	return err
 }
 
 func (client *Client) Exec(config *ExecConfig) (string, error) {
@@ -373,32 +447,33 @@ func (client *Client) Exec(config *ExecConfig) (string, error) {
 		return "", err
 	}
 	uri := fmt.Sprintf("/containers/%s/exec", config.Container)
-	resp, err := client.doRequest("POST", uri, data)
+	resp, err := client.DoRequest("POST", uri, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
 	var createExecResp struct {
 		Id string
 	}
-	if err = json.Unmarshal(resp, &createExecResp); err != nil {
+	if err = jsonUnmarshal(resp, &createExecResp); err != nil {
 		return "", err
 	}
 	uri = fmt.Sprintf("/exec/%s/start", createExecResp.Id)
-	resp, err = client.doRequest("POST", uri, data)
+	resp, err = client.DoRequest("POST", uri, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
+	resp.Body.Close()
 	return createExecResp.Id, nil
 }
 
 func (client *Client) InspectImage(name string) (ImageInfo, error) {
 	uri := fmt.Sprintf("/images/%s/json", name)
-	resp, err := client.doRequest("GET", uri, nil)
+	resp, err := client.DoRequest("GET", uri, nil)
 	if err != nil {
 		return ImageInfo{}, err
 	}
 	img := ImageInfo{}
-	if err := json.Unmarshal(resp, &img); err != nil {
+	if err := jsonUnmarshal(resp, &img); err != nil {
 		return ImageInfo{}, fmt.Errorf("docker: InspectImage: %v", err)
 	}
 	return img, nil
@@ -406,12 +481,12 @@ func (client *Client) InspectImage(name string) (ImageInfo, error) {
 
 func (client *Client) History(id string) ([]ImageLayer, error) {
 	uri := fmt.Sprintf("%s/images/%s/history", APIVersion, id)
-	data, err := client.doRequest("GET", uri, nil)
+	data, err := client.DoRequest("GET", uri, nil)
 	if err != nil {
 		return nil, err
 	}
 	layers := []ImageLayer{}
-	err = json.Unmarshal(data, &layers)
+	err = jsonUnmarshal(data, &layers)
 	if err != nil {
 		return nil, err
 	}
@@ -436,15 +511,15 @@ func (client *Client) Commit(options *CommitOptions, config *ContainerConfig) (s
 	if err != nil {
 		return "", err
 	}
-	uri := fmt.Sprintf("/commit?" + values.Encode())
-	resp, err := client.doRequest("POST", uri, data)
+	uri := "/commit?" + values.Encode()
+	resp, err := client.DoRequest("POST", uri, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
 	var commitResp struct {
 		Id string
 	}
-	if err = json.Unmarshal(resp, &commitResp); err != nil {
+	if err = jsonUnmarshal(resp, &commitResp); err != nil {
 		return "", fmt.Errorf("docker: commit: %v", err)
 	}
 	if commitResp.Id == "" {
@@ -466,54 +541,69 @@ func (client *Client) Tag(imgId string, ops *TagOptions) error {
 	imgId = (&url.URL{Path: imgId}).String()
 
 	uri := fmt.Sprintf("/images/%s/tag?%s", imgId, values.Encode())
-	_, err := client.doRequest("POST", uri, nil)
-	// doRequest checks for a 200
+	resp, err := client.DoRequest("POST", uri, nil)
+	if err == nil {
+		resp.Body.Close()
+	}
 	return err
 }
 
 // Changes provides a list of changes made to a container.
 func (client *Client) Changes(cid string) ([]ContainerChange, error) {
 	uri := fmt.Sprintf("/containers/%s/changes", cid)
-	resp, err := client.doRequest("GET", uri, nil)
+	resp, err := client.DoRequest("GET", uri, nil)
 	var changes []ContainerChange
 	if err != nil {
 		return changes, err
 	}
-	if err = json.Unmarshal(resp, &changes); err != nil {
+	if err = jsonUnmarshal(resp, &changes); err != nil {
 		return changes, fmt.Errorf("docker: changes: %v", err)
 	}
 	return changes, nil
 }
 
+// TarReader wraps tar.Reader with a close method.
+type TarReader struct {
+	*tar.Reader
+	c io.Closer
+}
+
+func (tr TarReader) Close() error {
+	return tr.c.Close()
+}
+
 // Copy copies files or folders from a container.
-func (client *Client) Copy(cid, resource string) (*tar.Reader, error) {
+// It is the caller's responsiblity to call Close on returned TarReader.
+func (client *Client) Copy(cid, resource string) (TarReader, error) {
 	data, err := json.Marshal(map[string]string{"Resource": resource})
 	if err != nil {
-		return nil, err
+		return TarReader{}, err
 	}
 
 	uri := fmt.Sprintf("/containers/%s/copy", cid)
 
-	resp, err := client.doRequest("POST", uri, data)
+	resp, err := client.DoRequest("POST", uri, bytes.NewReader(data))
 	if err != nil {
-		return nil, err
+		return TarReader{}, err
 	}
-
-	return tar.NewReader(bytes.NewReader(resp)), nil
+	return TarReader{
+		tar.NewReader(resp.Body),
+		resp.Body,
+	}, nil
 }
 
 // Wait blocks until a container has exited. Wait returns the StatusCode of the
 // exited process.
 func (client *Client) Wait(cid string) (int, error) {
 	uri := fmt.Sprintf("/containers/%s/wait", cid)
-	resp, err := client.doRequest("POST", uri, nil)
+	resp, err := client.DoRequest("POST", uri, nil)
 	if err != nil {
 		return 0, err
 	}
 	waitResp := struct {
 		StatusCode int
 	}{-1}
-	if err := json.Unmarshal(resp, &waitResp); err != nil {
+	if err := jsonUnmarshal(resp, &waitResp); err != nil {
 		return 0, fmt.Errorf("docker: wait: %v", err)
 	}
 	return waitResp.StatusCode, nil
