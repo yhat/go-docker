@@ -688,3 +688,27 @@ func SplitStream(stream io.Reader, stdout, stderr io.Writer) error {
 		}
 	}
 }
+
+func (client *Client) MonitorStats(id string) (*Stats, error) {
+
+	uri := fmt.Sprintf("%s/containers/%s/stats?stream=0", client.URL.String(), id)
+	resp, err := client.HTTPClient.Get(uri)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, &Error{StatusCode: resp.StatusCode,
+			Status: resp.Status, msg: string(data)}
+	}
+	var stats *Stats
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(&stats); err != nil {
+		return nil, fmt.Errorf("could not decode stats: %v", err)
+	}
+	return stats, nil
+}
