@@ -277,7 +277,10 @@ func CheckExposedPort() (err error) {
 
 	// give the simple http server a second to start up
 	time.Sleep(500 * time.Millisecond)
-	_, err = http.Get(u)
+	resp, err = http.Get(u)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		return fmt.Errorf("connecting to docker port %v", err)
 	}
