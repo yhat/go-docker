@@ -277,7 +277,7 @@ func CheckExposedPort() (err error) {
 
 	// give the simple http server a second to start up
 	time.Sleep(500 * time.Millisecond)
-	resp, err = http.Get(u)
+	resp, err := http.Get(u)
 	if resp != nil {
 		defer resp.Body.Close()
 	}
